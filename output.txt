@@ -1,0 +1,51 @@
+================================================
+Test case 1: Basic Features
+------------------------------------------------
+Requesting URL: https://www.eecg.toronto.edu/~bli/ece1724/assignments/files/lab3.html
+Method: GET
+Response body:
+<html>
+<body>
+<h1>
+Hello, World!
+</h1>
+</body>
+</html>
+
+================================================
+Test case 2: The URL contains an invalid IP address
+------------------------------------------------
+Requesting URL: https://[...1]
+Method: GET
+Error: The URL contains an invalid IPv6 address.
+================================================
+Test case 3: The host address cannot be resolved (or the network is offline)
+------------------------------------------------
+Requesting URL: https://example.rs
+Method: GET
+Error: Unable to connect to the server. Perhaps the network is offline or the server hostname cannot be resolved.
+================================================
+Test case 4: Supporting the POST Method
+------------------------------------------------
+Requesting URL: https://jsonplaceholder.typicode.com/posts
+Method: POST
+Data: userId=1&title=Hello World
+Response body (JSON with sorted keys):
+{
+  "id": 101,
+  "title": "Hello World",
+  "userId": "1"
+}
+================================================
+Test case 5: Sending JSON Formatted Data to a REST API Server
+------------------------------------------------
+Requesting URL: https://dummyjson.com/posts/add
+Method: POST
+JSON: {"title": "World", "userId": 5}
+Response body (JSON with sorted keys):
+{
+  "id": 252,
+  "title": "World",
+  "userId": 5
+}
+================================================

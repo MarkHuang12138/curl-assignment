@@ -1,0 +1,23 @@
+#!/bin/bash
+cargo build --quiet
+echo "================================================"
+echo "Test case 1: Basic Features" 
+echo "------------------------------------------------"
+target/debug/curl "https://www.eecg.toronto.edu/~bli/ece1724/assignments/files/lab3.html"
+echo "================================================"
+echo "Test case 2: The URL contains an invalid IP address"
+echo "------------------------------------------------"
+target/debug/curl "https://[...1]"
+echo "================================================"
+echo "Test case 3: The host address cannot be resolved (or the network is offline)"
+echo "------------------------------------------------"
+target/debug/curl "https://example.rs"
+echo "================================================"
+echo "Test case 4: Supporting the POST Method"
+echo "------------------------------------------------"
+target/debug/curl "https://jsonplaceholder.typicode.com/posts" -d "userId=1&title=Hello World" -X POST
+echo "================================================"
+echo "Test case 5: Sending JSON Formatted Data to a REST API Server"
+echo "------------------------------------------------"
+target/debug/curl --json '{"title": "World", "userId": 5}' "https://dummyjson.com/posts/add"
+echo "================================================"

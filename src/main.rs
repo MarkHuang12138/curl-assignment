@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::{env, fs::File, io::Write, str::FromStr};
 use url::{ParseError, Url};
 
-//print JSON
+// print JSON with sorted keys
 fn print_sorted_json(value: &Value) {
     if let Some(obj) = value.as_object() {
         let mut pairs: Vec<_> = obj.iter().collect();
@@ -25,14 +25,14 @@ fn print_sorted_json(value: &Value) {
 }
 
 fn main() {
-    //parameter Analysis
+    //parameter Parsing
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         println!("Usage: cargo run -- <URL> [-X METHOD] [-d data] [--json JSON] [-H 'K: V']... [-I|--head] [-o FILE] [-L] [-s]");
         return;
     }
 
-    let url_input = args[1].trim().to_string();
+    let mut url_input: Option<String> = None;
     let mut method = "GET".to_string();
     let mut form_data = String::new(); // -d
     let mut json_raw: Option<String> = None; // --json
@@ -42,7 +42,7 @@ fn main() {
     let mut follow_redirects = false; // -L
     let mut silent = false; // -s
 
-    let mut i = 2;
+    let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "-X" => {
@@ -94,6 +94,12 @@ fn main() {
             "-s" => {
                 silent = true;
             }
+
+            token if !token.starts_with('-') && url_input.is_none() => {
+                url_input = Some(token.to_string());
+            }
+
+            //unknown option exit
             x if x.starts_with('-') => {
                 eprintln!("Unknown option: {}", x);
                 return;
@@ -102,6 +108,14 @@ fn main() {
         }
         i += 1;
     }
+
+    let url_input = match url_input {
+        Some(u) => u,
+        None => {
+            println!("Usage: cargo run -- <URL> [-X METHOD] [-d data] [--json JSON] [-H 'K: V']... [-I|--head] [-o FILE] [-L] [-s]");
+            return;
+        }
+    };
 
     if !silent {
         println!("Requesting URL: {}", url_input);
@@ -134,6 +148,7 @@ fn main() {
         return;
     }
 
+    //client Build
     let client = Client::builder()
         .redirect(if follow_redirects {
             Policy::limited(10)
@@ -153,6 +168,7 @@ fn main() {
         );
     }
 
+    //send Request
     let mut req = match method.as_str() {
         "GET" => client.get(parsed.clone()),
         "POST" => client.post(parsed.clone()),
@@ -174,12 +190,12 @@ fn main() {
     let response = match req.send() {
         Ok(r) => r,
         Err(_) => {
-            println!("Error: Unable to connect to the server. Perhaps the network is offline or the server hostname is invalid.");
+            println!("Error: Unable to connect to the server. Perhaps the network is offline or the server hostname cannot be resolved.");
             return;
         }
     };
 
-    //return only the header
+    // print only the response headers
     if head_only {
         for (k, v) in response.headers() {
             println!("{}: {}", k, v.to_str().unwrap_or("<binary>"));
@@ -187,7 +203,7 @@ fn main() {
         return;
     }
 
-    // Non-2xx
+    //non-2xx
     if !response.status().is_success() {
         println!(
             "Error: Request failed with status code: {}.",
@@ -195,6 +211,8 @@ fn main() {
         );
         return;
     }
+
+    //output file or saved file
     if let Some(path) = out_file {
         let mut file = File::create(&path).expect("cannot create file");
         let bytes = response.bytes().expect("read body failed");
@@ -216,6 +234,4 @@ fn main() {
             println!("{}", text);
         }
     }
-
-    if follow_redirects && !silent {}
 }
