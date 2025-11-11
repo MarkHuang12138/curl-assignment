@@ -1,25 +1,47 @@
 use reqwest::blocking::Client;
-use reqwest::header::CONTENT_TYPE;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
+use reqwest::redirect::Policy;
 use serde_json::Value;
-use std::env;
+use std::{env, fs::File, io::Write, str::FromStr};
 use url::{ParseError, Url};
 
+//print JSON
+fn print_sorted_json(value: &Value) {
+    if let Some(obj) = value.as_object() {
+        let mut pairs: Vec<_> = obj.iter().collect();
+        pairs.sort_by_key(|(k, _)| (*k).to_string());
+        println!("{{");
+        for (i, (k, v)) in pairs.iter().enumerate() {
+            if i + 1 == pairs.len() {
+                println!("  \"{}\": {}", k, v);
+            } else {
+                println!("  \"{}\": {},", k, v);
+            }
+        }
+        println!("}}");
+    } else {
+        println!("{}", serde_json::to_string_pretty(value).unwrap());
+    }
+}
+
 fn main() {
-    //retrieve command-line arguments
+    //parameter Analysis
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        println!("Usage: cargo run -- <URL> [-X POST] [-d data]");
+        println!("Usage: cargo run -- <URL> [-X METHOD] [-d data] [--json JSON] [-H 'K: V']... [-I|--head] [-o FILE] [-L] [-s]");
         return;
     }
 
-    let mut url_input = String::new();
+    let url_input = args[1].trim().to_string();
     let mut method = "GET".to_string();
-    let mut data = String::new(); // POST
+    let mut form_data = String::new(); // -d
+    let mut json_raw: Option<String> = None; // --json
+    let mut headers = HeaderMap::new(); // -H
+    let mut head_only = false; // -I / --head
+    let mut out_file: Option<String> = None; // -o
+    let mut follow_redirects = false; // -L
+    let mut silent = false; // -s
 
-    //URL
-    url_input = args[1].trim().to_string();
-
-    //iterate over the remaining parameters
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -31,22 +53,67 @@ fn main() {
             }
             "-d" => {
                 if i + 1 < args.len() {
-                    data = args[i + 1].clone();
+                    form_data = args[i + 1].clone();
                     i += 1;
                 }
+            }
+            "--json" => {
+                if i + 1 < args.len() {
+                    json_raw = Some(args[i + 1].clone());
+                    method = "POST".into();
+                    i += 1;
+                }
+            }
+            "-H" => {
+                if i + 1 < args.len() {
+                    let raw = &args[i + 1];
+                    if let Some((k, v)) = raw.split_once(':') {
+                        let name = HeaderName::from_str(k.trim()).expect("Invalid header name");
+                        let value = HeaderValue::from_str(v.trim()).expect("Invalid header value");
+                        headers.append(name, value);
+                    } else {
+                        eprintln!("Error: -H expects 'Name: Value'");
+                        return;
+                    }
+                    i += 1;
+                }
+            }
+            "-I" | "--head" => {
+                head_only = true;
+                method = "HEAD".into();
+            }
+            "-o" => {
+                if i + 1 < args.len() {
+                    out_file = Some(args[i + 1].clone());
+                    i += 1;
+                }
+            }
+            "-L" => {
+                follow_redirects = true;
+            }
+            "-s" => {
+                silent = true;
+            }
+            x if x.starts_with('-') => {
+                eprintln!("Unknown option: {}", x);
+                return;
             }
             _ => {}
         }
         i += 1;
     }
 
-    println!("Requesting URL: {}", url_input);
-    println!("Method: {}", method);
-    if !data.is_empty() {
-        println!("Data: {}", data);
+    if !silent {
+        println!("Requesting URL: {}", url_input);
+        println!("Method: {}", method);
+        if let Some(s) = &json_raw {
+            println!("JSON: {}", s);
+        } else if !form_data.is_empty() {
+            println!("Data: {}", form_data);
+        }
     }
 
-    //URL Check
+    //URL Validation
     let parsed = match Url::parse(&url_input) {
         Ok(u) => u,
         Err(e) => {
@@ -67,18 +134,44 @@ fn main() {
         return;
     }
 
-    let client = Client::new();
-    let response = if method == "POST" {
-        client
-            .post(&url_input)
-            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .body(data.clone())
-            .send()
-    } else {
-        client.get(&url_input).send()
-    };
+    let client = Client::builder()
+        .redirect(if follow_redirects {
+            Policy::limited(10)
+        } else {
+            Policy::none()
+        })
+        .build()
+        .expect("Failed to build client");
 
-    let response = match response {
+    //Content-Type
+    if json_raw.is_some() && !headers.contains_key(CONTENT_TYPE) {
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    } else if !form_data.is_empty() && !headers.contains_key(CONTENT_TYPE) {
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+    }
+
+    let mut req = match method.as_str() {
+        "GET" => client.get(parsed.clone()),
+        "POST" => client.post(parsed.clone()),
+        "HEAD" => client.head(parsed.clone()),
+        _ => {
+            eprintln!("Unsupported method: {}", method);
+            return;
+        }
+    }
+    .headers(headers);
+
+    if let Some(s) = &json_raw {
+        let v: Value = serde_json::from_str(s).unwrap_or_else(|e| panic!("Invalid JSON: {}", e));
+        req = req.body(serde_json::to_string(&v).unwrap());
+    } else if method == "POST" {
+        req = req.body(form_data.clone());
+    }
+
+    let response = match req.send() {
         Ok(r) => r,
         Err(_) => {
             println!("Error: Unable to connect to the server. Perhaps the network is offline or the server hostname is invalid.");
@@ -86,6 +179,15 @@ fn main() {
         }
     };
 
+    //return only the header
+    if head_only {
+        for (k, v) in response.headers() {
+            println!("{}: {}", k, v.to_str().unwrap_or("<binary>"));
+        }
+        return;
+    }
+
+    // Non-2xx
     if !response.status().is_success() {
         println!(
             "Error: Request failed with status code: {}.",
@@ -93,26 +195,27 @@ fn main() {
         );
         return;
     }
-
-    let text = response.text().unwrap_or_default();
-
-    //attempt to parse as JSON
-    if let Ok(v) = serde_json::from_str::<Value>(&text) {
-        println!("Response body (JSON with sorted keys):");
-        if let Some(obj) = v.as_object() {
-            let mut sorted = obj.clone().into_iter().collect::<Vec<_>>();
-            sorted.sort_by_key(|(k, _)| k.clone());
-            println!("{{");
-            for (k, val) in sorted {
-                println!("  \"{}\": {},", k, val);
-            }
-            println!("}}");
-        } else {
-            //if it is an array, print
-            println!("{}", serde_json::to_string_pretty(&v).unwrap());
+    if let Some(path) = out_file {
+        let mut file = File::create(&path).expect("cannot create file");
+        let bytes = response.bytes().expect("read body failed");
+        file.write_all(&bytes).expect("write body failed");
+        if !silent {
+            println!("Saved body to {}", path);
         }
     } else {
-        //not JSON, output the original text
-        println!("Response body:\n{}", text);
+        let text = response.text().unwrap_or_default();
+        if let Ok(v) = serde_json::from_str::<Value>(&text) {
+            if !silent {
+                println!("Response body (JSON with sorted keys):");
+            }
+            print_sorted_json(&v);
+        } else {
+            if !silent {
+                println!("Response body:");
+            }
+            println!("{}", text);
+        }
     }
+
+    if follow_redirects && !silent {}
 }
